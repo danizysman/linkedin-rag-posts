@@ -7,6 +7,7 @@ import json
 import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,60 @@ def make_point_id(post_urn: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, post_urn))
 
 
+_EXPLICIT_DATE_FORMATS = (
+    "%Y-%m-%d",
+    "%Y/%m/%d",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M",
+    "%b %d, %Y",
+    "%B %d, %Y",
+)
+
+
+def parse_timestamp(value: Any) -> int | None:
+    """Normalize ISO-8601, epoch sec/ms, or explicit dates to Unix epoch seconds.
+
+    Returns None for missing values or relative LinkedIn strings like '3mo' or '12h •'.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        ts = value / 1000.0 if abs(value) >= 1_000_000_000_000 else float(value)
+        return int(ts) if ts > 0 else None
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip()
+    if not text:
+        return None
+
+    try:
+        numeric = float(text)
+    except ValueError:
+        numeric = None
+    if numeric is not None:
+        ts = numeric / 1000.0 if abs(numeric) >= 1_000_000_000_000 else numeric
+        return int(ts) if ts > 0 else None
+
+    iso_candidate = f"{text[:-1]}+00:00" if text.endswith("Z") else text
+    try:
+        dt = datetime.fromisoformat(iso_candidate)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return int(dt.timestamp())
+    except ValueError:
+        pass
+
+    for fmt in _EXPLICIT_DATE_FORMATS:
+        try:
+            dt = datetime.strptime(text, fmt).replace(tzinfo=UTC)
+            return int(dt.timestamp())
+        except ValueError:
+            continue
+
+    return None
+
+
 def _build_embedding_text(record: dict[str, Any], ai_tags: list[str], ai_summary: str) -> str:
     """Combine post text (or image alt fallback) with AI summary and tags for embedding."""
     base_text = (record.get("post_text") or "").strip() or (
@@ -54,6 +109,15 @@ def _build_payload(
     ai_summary: str,
 ) -> dict[str, Any]:
     """Extract normalized Qdrant payload fields from a LinkedIn post record."""
+    posted_ts = parse_timestamp(
+        record.get("posted_ts") or record.get("posted_time") or record.get("date")
+    )
+    saved_ts = parse_timestamp(
+        record.get("saved_ts")
+        or record.get("saved_at")
+        or record.get("scraped_at")
+        or record.get("timestamp")
+    )
     return {
         "post_urn": record.get("post_urn"),
         "post_url": record.get("post_url"),
@@ -67,6 +131,8 @@ def _build_payload(
         "is_company_post": bool(record.get("is_company_post", False)),
         "post_image_alt": record.get("post_image_alt"),
         "posted_time": record.get("posted_time"),
+        "posted_ts": posted_ts,
+        "saved_ts": saved_ts,
         "connection_degree": record.get("connection_degree"),
     }
 

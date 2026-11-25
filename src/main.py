@@ -10,6 +10,7 @@ from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from src.db import (
+    DateField,
     ensure_collection,
     get_dense_model,
     get_qdrant_client,
@@ -48,6 +49,8 @@ class SearchResult(BaseModel):
     ai_summary: str = ""
     has_image: bool = False
     is_company_post: bool = False
+    posted_ts: int | None = None
+    saved_ts: int | None = None
 
 
 class SearchResponse(BaseModel):
@@ -66,7 +69,8 @@ class AskResponse(BaseModel):
     sources: list[SearchResult]
 
 
-def _to_search_result(point: Any) -> SearchResult:
+def to_search_result(point: Any) -> SearchResult:
+    """Convert a Qdrant ScoredPoint into a SearchResult model."""
     payload = point.payload or {}
     return SearchResult(
         score=float(point.score),
@@ -78,7 +82,32 @@ def _to_search_result(point: Any) -> SearchResult:
         ai_summary=payload.get("ai_summary") or "",
         has_image=bool(payload.get("has_image", False)),
         is_company_post=bool(payload.get("is_company_post", False)),
+        posted_ts=payload.get("posted_ts"),
+        saved_ts=payload.get("saved_ts"),
     )
+
+
+def synthesize_answer(query: str, sources: list[SearchResult]) -> str:
+    """Synthesize a cited markdown answer from retrieved SearchResult sources."""
+    if not sources:
+        return "No matching saved posts were found to answer your question."
+
+    context_blocks = [
+        (
+            f"[{idx}] Author: {src.author_name or 'Unknown'}\n"
+            f"URL: {src.post_url or 'N/A'}\n"
+            f"Tags: {', '.join(src.ai_tags)}\n"
+            f"Summary: {src.ai_summary}\n"
+            f"Text: {src.post_text}"
+        )
+        for idx, src in enumerate(sources, start=1)
+    ]
+    prompt = RAG_PROMPT.format(query=query, context="\n\n---\n\n".join(context_blocks))
+    response = get_genai_client().models.generate_content(
+        model=RAG_MODEL,
+        contents=prompt,
+    )
+    return (response.text or "").strip()
 
 
 @asynccontextmanager
@@ -125,8 +154,11 @@ def search_endpoint(
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
     author_name: Annotated[str | None, Query()] = None,
     ai_tags: Annotated[list[str] | None, Query()] = None,
+    after_ts: Annotated[int | None, Query()] = None,
+    before_ts: Annotated[int | None, Query()] = None,
+    date_field: Annotated[DateField, Query()] = "posted_ts",
 ) -> SearchResponse:
-    """Hybrid dense + BM25 sparse search fused with RRF and optional payload filters."""
+    """Hybrid dense + BM25 sparse search fused with RRF and optional payload/date filters."""
     client = get_qdrant_client()
     points = hybrid_search(
         client=client,
@@ -134,8 +166,11 @@ def search_endpoint(
         limit=limit,
         author_name=author_name,
         ai_tags=ai_tags,
+        after_ts=after_ts,
+        before_ts=before_ts,
+        date_field=date_field,
     )
-    return SearchResponse(results=[_to_search_result(pt) for pt in points])
+    return SearchResponse(results=[to_search_result(pt) for pt in points])
 
 
 @app.post("/ask", response_model=AskResponse)
@@ -149,28 +184,6 @@ def ask_endpoint(body: AskRequest) -> AskResponse:
         author_name=body.author_name,
         ai_tags=body.ai_tags,
     )
-    sources = [_to_search_result(pt) for pt in points]
-
-    if not sources:
-        return AskResponse(
-            answer="No matching saved posts were found to answer your question.",
-            sources=[],
-        )
-
-    context_blocks = [
-        (
-            f"[{idx}] Author: {src.author_name or 'Unknown'}\n"
-            f"URL: {src.post_url or 'N/A'}\n"
-            f"Tags: {', '.join(src.ai_tags)}\n"
-            f"Summary: {src.ai_summary}\n"
-            f"Text: {src.post_text}"
-        )
-        for idx, src in enumerate(sources, start=1)
-    ]
-    prompt = RAG_PROMPT.format(query=body.query, context="\n\n---\n\n".join(context_blocks))
-
-    response = get_genai_client().models.generate_content(
-        model=RAG_MODEL,
-        contents=prompt,
-    )
-    return AskResponse(answer=(response.text or "").strip(), sources=sources)
+    sources = [to_search_result(pt) for pt in points]
+    answer = synthesize_answer(query=body.query, sources=sources)
+    return AskResponse(answer=answer, sources=sources)

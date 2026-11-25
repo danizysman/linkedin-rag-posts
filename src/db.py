@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from typing import Literal
 
 from fastembed import SparseTextEmbedding, TextEmbedding
 from qdrant_client import QdrantClient, models
@@ -13,11 +14,16 @@ DENSE_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 DENSE_VECTOR_SIZE = 384
 SPARSE_MODEL_NAME = "Qdrant/bm25"
 
+DateField = Literal["posted_ts", "saved_ts"]
+VALID_DATE_FIELDS = {"posted_ts", "saved_ts"}
+
 PAYLOAD_INDEXES: list[tuple[str, models.PayloadSchemaType]] = [
     ("author_name", models.PayloadSchemaType.KEYWORD),
     ("ai_tags", models.PayloadSchemaType.KEYWORD),
     ("has_image", models.PayloadSchemaType.BOOL),
     ("is_company_post", models.PayloadSchemaType.BOOL),
+    ("posted_ts", models.PayloadSchemaType.INTEGER),
+    ("saved_ts", models.PayloadSchemaType.INTEGER),
 ]
 
 
@@ -107,8 +113,14 @@ def embed_texts(
 def build_filter(
     author_name: str | None = None,
     ai_tags: list[str] | None = None,
+    after_ts: int | None = None,
+    before_ts: int | None = None,
+    date_field: DateField = "posted_ts",
 ) -> models.Filter | None:
-    """Build an optional Qdrant Filter for author_name and ai_tags."""
+    """Build an optional Qdrant Filter for author_name, ai_tags, and timestamp range."""
+    if date_field not in VALID_DATE_FIELDS:
+        raise ValueError(f"Unsupported date_field: {date_field}")
+
     conditions: list[models.Condition] = []
     if author_name:
         conditions.append(
@@ -126,6 +138,13 @@ def build_filter(
                     match=models.MatchAny(any=normalized),
                 )
             )
+    if after_ts is not None or before_ts is not None:
+        conditions.append(
+            models.FieldCondition(
+                key=date_field,
+                range=models.Range(gte=after_ts, lte=before_ts),
+            )
+        )
     return models.Filter(must=conditions) if conditions else None
 
 
@@ -135,6 +154,9 @@ def hybrid_search(
     limit: int = 10,
     author_name: str | None = None,
     ai_tags: list[str] | None = None,
+    after_ts: int | None = None,
+    before_ts: int | None = None,
+    date_field: DateField = "posted_ts",
     collection_name: str = COLLECTION_NAME,
 ) -> list[models.ScoredPoint]:
     """Run hybrid dense + BM25 sparse search fused with Reciprocal Rank Fusion."""
@@ -145,7 +167,13 @@ def hybrid_search(
         values=sparse_raw.values.tolist(),
     )
 
-    query_filter = build_filter(author_name=author_name, ai_tags=ai_tags)
+    query_filter = build_filter(
+        author_name=author_name,
+        ai_tags=ai_tags,
+        after_ts=after_ts,
+        before_ts=before_ts,
+        date_field=date_field,
+    )
     prefetch_limit = max(limit * 3, 20)
 
     response = client.query_points(

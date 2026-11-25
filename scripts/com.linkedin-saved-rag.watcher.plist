@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.linkedin-saved-rag.watcher</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>uv run python scripts/watch_data.py --dir data --debounce 3.0</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/dzysman/Projects/linkedin-saved-rag</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>QDRANT_URL</key>
+        <string>http://localhost:6333</string>
+        <key>QDRANT_API_KEY</key>
+        <string></string>
+        <key>GOOGLE_GENAI_USE_VERTEXAI</key>
+        <string>true</string>
+        <key>GOOGLE_CLOUD_PROJECT</key>
+        <string>gen-lang-client-0174229354</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/linkedin-saved-rag-watcher.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/linkedin-saved-rag-watcher.err.log</string>
+</dict>
+</plist>
