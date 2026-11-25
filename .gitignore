@@ -1,0 +1,6 @@
+
+# Secrets & local DB storage
+.envrc
+.direnv/
+qdrant_storage/
+data/
