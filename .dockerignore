@@ -1,0 +1,12 @@
+.git/
+.venv/
+.envrc
+.direnv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+data/
+qdrant_storage/
+prompts/
+tests/
