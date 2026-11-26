@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import json
 import logging
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -38,10 +40,50 @@ def snapshot_directory(watch_dir: Path) -> dict[Path, tuple[int, int]]:
     return snap
 
 
+def parse_ingest_summary(stdout: str) -> dict[str, int] | None:
+    """Extract the JSON summary dict printed by src.ingest from stdout."""
+    for line in reversed(stdout.splitlines()):
+        stripped = line.strip()
+        if not stripped.startswith("{"):
+            continue
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and {"ingested", "skipped", "failed"} <= data.keys():
+            return data
+    return None
+
+
+def send_notification(title: str, message: str) -> None:
+    """Send a native macOS Notification Center alert via osascript."""
+    if sys.platform != "darwin":
+        return
+    try:
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                "on run argv",
+                "-e",
+                "display notification (item 2 of argv) with title (item 1 of argv)",
+                "-e",
+                "end run",
+                title,
+                message,
+            ],
+            check=False,
+            capture_output=True,
+        )
+    except OSError as exc:
+        logger.debug("Failed to send macOS notification: %s", exc)
+
+
 def run_ingest_with_lock(
     watch_dir: Path,
     lock_file: Path = DEFAULT_LOCK_FILE,
     runner: Callable[[Path], int] | None = None,
+    notify: bool = True,
 ) -> bool:
     """Acquire non-blocking lockfile and run ingestion. Returns False if already locked."""
     lock_file.parent.mkdir(parents=True, exist_ok=True)
@@ -52,17 +94,39 @@ def run_ingest_with_lock(
             logger.info("Ingestion already running (lock held on %s); skipping.", lock_file)
             return False
 
+        summary: dict[str, int] | None = None
         try:
             if runner is not None:
                 code = runner(watch_dir)
             else:
                 proc = subprocess.run(
-                    ["uv", "run", "python", "-m", "src.ingest", str(watch_dir)],
+                    ["uv", "run", "--no-sync", "python", "-m", "src.ingest", str(watch_dir)],
+                    capture_output=True,
+                    text=True,
                     check=False,
                 )
                 code = proc.returncode
+                if proc.stdout:
+                    logger.info("%s", proc.stdout.strip())
+                if proc.stderr:
+                    logger.info("%s", proc.stderr.strip())
+                summary = parse_ingest_summary(proc.stdout or "")
             if code != 0:
                 logger.warning("Ingestion exited with status %d", code)
+            if notify:
+                if code == 0:
+                    msg = (
+                        f"Ingested {summary['ingested']}, "
+                        f"skipped {summary['skipped']}, "
+                        f"failed {summary['failed']}"
+                        if summary
+                        else "Ingestion complete"
+                    )
+                    send_notification("LinkedIn Saved RAG", msg)
+                else:
+                    send_notification(
+                        "LinkedIn Saved RAG (Error)", f"Ingestion failed (exit {code})"
+                    )
         finally:
             fcntl.flock(fp.fileno(), fcntl.LOCK_UN)
     return True
@@ -76,6 +140,7 @@ def watch_loop(
     runner: Callable[[Path], int] | None = None,
     max_iterations: int | None = None,
     initial_snapshot: dict[Path, tuple[int, int]] | None = None,
+    notify: bool = True,
 ) -> None:
     """Poll watch_dir for new/updated JSON files, debounce until stable, and trigger ingest."""
     last_ingested = (
@@ -96,7 +161,12 @@ def watch_loop(
                 last_change_ts = now
             elif now - last_change_ts >= debounce_seconds:
                 logger.info("Detected stable JSON changes in %s; starting ingestion.", watch_dir)
-                if run_ingest_with_lock(watch_dir, lock_file=lock_file, runner=runner):
+                if run_ingest_with_lock(
+                    watch_dir,
+                    lock_file=lock_file,
+                    runner=runner,
+                    notify=notify,
+                ):
                     last_ingested = current
                     pending_snapshot = None
         else:
@@ -122,6 +192,11 @@ def main() -> None:
         help="Wait time after last file change before ingesting",
     )
     parser.add_argument("--lock-file", type=Path, default=DEFAULT_LOCK_FILE, help="Lockfile path")
+    parser.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="Disable macOS Notification Center alerts",
+    )
     args = parser.parse_args()
 
     watch_loop(
@@ -129,6 +204,7 @@ def main() -> None:
         poll_interval=args.interval,
         debounce_seconds=args.debounce,
         lock_file=args.lock_file,
+        notify=not args.no_notify,
     )
 
 
