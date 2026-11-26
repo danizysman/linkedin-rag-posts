@@ -9,11 +9,11 @@
     <array>
         <string>/bin/zsh</string>
         <string>-lc</string>
-        <string>direnv exec /Users/dzysman/Projects/linkedin-saved-rag uv run --no-sync python scripts/watch_data.py --dir data --debounce 3.0</string>
+        <string>direnv exec /path/to/linkedin-saved-rag uv run --no-sync python scripts/watch_data.py --dir data --debounce 3.0</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/dzysman/Projects/linkedin-saved-rag</string>
+    <string>/path/to/linkedin-saved-rag</string>
 
     <key>EnvironmentVariables</key>
     <dict>

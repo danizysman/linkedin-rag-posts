@@ -111,7 +111,7 @@ To register in Antigravity (`~/.gemini/config/mcp_config.json`) without duplicat
       "command": "direnv",
       "args": [
         "exec",
-        "/Users/dzysman/Projects/linkedin-saved-rag",
+        "/path/to/linkedin-saved-rag",
         "uv",
         "run",
         "--no-sync",
