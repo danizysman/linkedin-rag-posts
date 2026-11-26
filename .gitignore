@@ -5,3 +5,9 @@
 .direnv/
 qdrant_storage/
 data/
+
+# Python caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
