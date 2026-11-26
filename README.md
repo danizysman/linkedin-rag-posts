@@ -5,11 +5,18 @@ Local-first, Cloud Run–ready Hybrid Search & RAG service for LinkedIn saved po
 ## Quickstart
 
 ```bash
-# Ingest all staged JSON exports
-uv run python -m src.ingest data/
+# Local development (auto-starts qdrant-local and runs FastAPI on :8080)
+make local
 
-# Start the FastAPI server
-uv run uvicorn src.main:app --reload --port 8080
+# Ingest staged JSON exports locally
+make ingest-local
+
+# Cloud Run deploy (requires .env.cloud copied from .env.cloud.example)
+cp .env.cloud.example .env.cloud
+make deploy
+
+# Proxy authenticated Cloud Run service to localhost:8080
+make proxy
 ```
 
 ## Date Filtering

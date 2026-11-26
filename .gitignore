@@ -1,10 +1,7 @@
 
 # Secrets & local DB storage
 .envrc
+.env.cloud
 .direnv/
 qdrant_storage/
 data/
-# Python bytecode
-__pycache__/
-*.py[cod]
-.venv/

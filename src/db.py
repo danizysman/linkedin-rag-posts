@@ -50,7 +50,8 @@ def ensure_collection(
     client: QdrantClient,
     collection_name: str = COLLECTION_NAME,
 ) -> None:
-    """Create the collection and payload indexes idempotently if needed."""
+    """Create the collection and any missing payload indexes idempotently."""
+    existing_indexes: set[str] = set()
     if not client.collection_exists(collection_name):
         client.create_collection(
             collection_name=collection_name,
@@ -66,8 +67,13 @@ def ensure_collection(
                 )
             },
         )
+    else:
+        info = client.get_collection(collection_name)
+        existing_indexes = set((info.payload_schema or {}).keys())
 
     for field_name, field_schema in PAYLOAD_INDEXES:
+        if field_name in existing_indexes:
+            continue
         client.create_payload_index(
             collection_name=collection_name,
             field_name=field_name,
