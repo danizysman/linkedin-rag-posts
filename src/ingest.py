@@ -103,21 +103,23 @@ def _build_embedding_text(record: dict[str, Any], ai_tags: list[str], ai_summary
     return "\n\n".join(parts) or str(record.get("post_urn", ""))
 
 
+def _first_parsed_timestamp(record: dict[str, Any], keys: tuple[str, ...]) -> int | None:
+    """Return the first parseable timestamp across candidate keys in priority order."""
+    for key in keys:
+        ts = parse_timestamp(record.get(key))
+        if ts is not None:
+            return ts
+    return None
+
+
 def _build_payload(
     record: dict[str, Any],
     ai_tags: list[str],
     ai_summary: str,
 ) -> dict[str, Any]:
     """Extract normalized Qdrant payload fields from a LinkedIn post record."""
-    posted_ts = parse_timestamp(
-        record.get("posted_ts") or record.get("posted_time") or record.get("date")
-    )
-    saved_ts = parse_timestamp(
-        record.get("saved_ts")
-        or record.get("saved_at")
-        or record.get("scraped_at")
-        or record.get("timestamp")
-    )
+    posted_ts = _first_parsed_timestamp(record, ("posted_ts", "posted_date", "posted_time", "date"))
+    saved_ts = _first_parsed_timestamp(record, ("saved_ts", "saved_at", "scraped_at", "timestamp"))
     return {
         "post_urn": record.get("post_urn"),
         "post_url": record.get("post_url"),
@@ -131,6 +133,7 @@ def _build_payload(
         "is_company_post": bool(record.get("is_company_post", False)),
         "post_image_alt": record.get("post_image_alt"),
         "posted_time": record.get("posted_time"),
+        "posted_date": record.get("posted_date"),
         "posted_ts": posted_ts,
         "saved_ts": saved_ts,
         "connection_degree": record.get("connection_degree"),

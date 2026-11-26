@@ -9,21 +9,38 @@ from fastapi.testclient import TestClient
 from qdrant_client import models
 
 from src.db import build_filter
-from src.ingest import parse_timestamp
+from src.ingest import _build_payload, parse_timestamp
 from src.main import app
 
 
 def test_parse_timestamp_formats() -> None:
     assert parse_timestamp("2026-01-15T12:30:00Z") == 1768480200
+    assert parse_timestamp("2026-11-24T19:02:04.222Z") == 1795546924
     assert parse_timestamp("2026-01-15") == 1768435200
     assert parse_timestamp(1768480200) == 1768480200
     assert parse_timestamp(1768480200000) == 1768480200
     assert parse_timestamp("1768480200000") == 1768480200
     # Relative LinkedIn strings must not be guessed
     assert parse_timestamp("3mo") is None
+    assert parse_timestamp("1d") is None
     assert parse_timestamp("12h •") is None
     assert parse_timestamp("Reposted from Rola Dali • 11mo •") is None
     assert parse_timestamp(None) is None
+
+
+def test_build_payload_prefers_posted_date_over_relative_posted_time() -> None:
+    payload = _build_payload(
+        {
+            "post_urn": "urn:li:activity:7531069646452482048",
+            "posted_date": "2026-11-24T19:02:04.222Z",
+            "posted_time": "1d",
+        },
+        ai_tags=["ai"],
+        ai_summary="Summary.",
+    )
+    assert payload["posted_ts"] == 1795546924
+    assert payload["posted_date"] == "2026-11-24T19:02:04.222Z"
+    assert payload["posted_time"] == "1d"
 
 
 def test_build_filter_date_range() -> None:
